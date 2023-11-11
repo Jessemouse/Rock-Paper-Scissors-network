@@ -24,19 +24,68 @@ import sys
 PORT = 60_003
 ROLE = "?"
 SCORE = [0,0] #[Server score, Client score]
-SERVER_NAME = "Server"
-CLIENT_NAME = "Client"
+SERVER_NAME = "server"
+CLIENT_NAME = "client"
 SINGLE_PLAYER = "single"
 MAX_SCORE = 10
 SOCK = None
 CLIENT_CONNECTION = None
-TIMEOUT = 20
+TIMEOUT = 60
 MOVES = ( #Notice: n loses against n + 1. n wins against n - 1. MOVES is TIGHTLY coupled with winning logic.
     ("rock", "r"),
     ("paper", "p"),
     ("scissors", "s")
 )
 # ----- NETWORK FUNCTIONS ----- #
+def recv_data():
+    global SOCK
+    global CLIENT_CONNECTION
+    try:
+        if ROLE == CLIENT_NAME:
+            if SOCK:
+                return SOCK.recv(1024).decode()
+        elif ROLE == SERVER_NAME:
+            if CLIENT_CONNECTION:
+                return CLIENT_CONNECTION.recv(1024).decode()
+    except socket.timeout:
+        print("Connection timed out.")
+        return None
+    except Exception as e:
+        print (f"An error occured {e}")
+        return None
+    
+def send_data(data):
+    global SOCK
+    global CLIENT_CONNECTION
+    try:
+        if ROLE == CLIENT_NAME:
+            if SOCK:
+                SOCK.send(data.encode()) 
+        elif ROLE == SERVER_NAME:
+            if CLIENT_CONNECTION:
+                CLIENT_CONNECTION.send(data.encode())
+    except socket.timeout:
+        print("Connection timed out.")
+        return None
+    except Exception as e:
+        print (f"An error occured {e}")
+        return None
+
+def close_socket():
+    global SOCK
+    global CLIENT_CONNECTION
+    
+    if ROLE == CLIENT_NAME:
+        if SOCK:
+            SOCK.close()
+            SOCK = None
+    elif ROLE == SERVER_NAME:
+        if SOCK:
+            SOCK.close()
+            SOCK = None
+            CLIENT_CONNECTION.close()
+            CLIENT_CONNECTION = None
+
 def establish_client_connection():
     global CLIENT_CONNECTION
     try:
@@ -44,11 +93,11 @@ def establish_client_connection():
         CLIENT_CONNECTION.settimeout(TIMEOUT)
         print(f"Connection established with: " + str(address))
     except TimeoutError:
-        print("The connection timed out")
+        print("The connection timed out. Exiting program.")
         SOCK.close()
         sys.exit()
 
-def user_enters_exit(exit: str):
+def check_if_exit(exit: str):
     exit = exit.lower()
     bool = (exit == "exit")
     return bool
@@ -85,7 +134,7 @@ def serverside_get_play_socket(single: bool):
         if local_IPv4:
             while not is_valid_IPv4(ip):
                 ip = input (f"Enter an IP to host server at (your current IP is \"{local_IPv4}\"): ")
-                if user_enters_exit(ip):
+                if check_if_exit(ip):
                     return "exit"
         else:
             while not is_valid_IPv4(ip):
@@ -94,9 +143,9 @@ def serverside_get_play_socket(single: bool):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     
     server_socket.bind((ip, PORT))
-    print(f"Server is running on IP {ip}...")
-    server_socket.listen(1)
+    print(f"Connection established with IP {ip}. Waiting for opponent. Terminating connection in {TIMEOUT} seconds")
     server_socket.settimeout(TIMEOUT)
+    server_socket.listen(1)
     return server_socket
 
 def clientside_get_play_socket(host):
@@ -110,45 +159,23 @@ def clientside_get_play_socket(host):
     client_socket.connect((host, PORT))    
     return client_socket
 
-# ----- NETWORK PROGRAM ----- #
-ans = "?"
-#Ask player to be client, server or single-player
-print("Welcome to the game!")
-while ans not in {CLIENT_NAME, SERVER_NAME, SINGLE_PLAYER}: 
-    ans = input(f"Do you want to be Server ({SERVER_NAME}), Client ({CLIENT_NAME}) or create a single-player ({SINGLE_PLAYER}) server: ")
-    if user_enters_exit(ans):
-        sys.exit()
-
-if ans == SINGLE_PLAYER:
-    SERVER_NAME = input("Choose your name: ")
-    ROLE = SERVER_NAME
-    SOCK = serverside_get_play_socket(True)
-    
-elif ans == SERVER_NAME:
-    SERVER_NAME = input("Choose your name: ")
-    ROLE = SERVER_NAME
-    SOCK = serverside_get_play_socket(False)
-    if  user_enters_exit(SOCK):
-        sys.exit()
-        
-elif ans == CLIENT_NAME:
-    CLIENT_NAME = input("Choose your name: ")
-    ROLE = CLIENT_NAME
-    HOST = "?"
-    while not is_valid_IPv4(HOST):
-        HOST = input("Enter the server IP or single for single player: ")
-        if user_enters_exit(HOST):
-            sys.exit()
-        if (HOST == "single"):
-            break
-    
-    SOCK = clientside_get_play_socket(HOST)
-    
-else: 
-    breakpoint
-    # ----- GAME FUNCTIONS -----#
+def pickname():
+    global SERVER_NAME
+    global CLIENT_NAME
+    global ROLE
+    if ROLE == SERVER_NAME:
+        SERVER_NAME = input("Pick your name: ")
+        print(f"Your name is {SERVER_NAME}")
+        ROLE = SERVER_NAME
+    elif ROLE == CLIENT_NAME:
+        CLIENT_NAME = input("Pick your name: ")
+        print(f"Your name is {CLIENT_NAME}")
+        ROLE = CLIENT_NAME
+    return None
+   # ----- GAME FUNCTIONS -----#
 #Strings should be transfered as byte-arrays using 'barr = bytearray(str, "ASCII")'
 #Received byte-arrays are reconverted into strings using 'str = barr.decode("ASCII")'
+
 def is_valid_move(move):
     move = move.lower()
     
@@ -172,8 +199,6 @@ def add_score(winner):
         return None
 
 def get_move_index(move):
-    move.lower()
-    
     for n, (fullname, charname) in enumerate(MOVES):
         if move == fullname or move == charname:
             return n
@@ -182,19 +207,19 @@ def get_move_index(move):
 def check_who_wins_round(move_server, move_client):
     print(f"{SERVER_NAME} throws {move_server} and {CLIENT_NAME} throws {move_client}")
     
-    move_server = move_server.lower()
-    move_client = move_client.lower()
-    
+    move_server.lower()
+    move_client.lower()
     server_index = get_move_index(move_server)
-    client_index = get_move_index(move_client)
-    
     if server_index is None:
         return (f"{SERVER_NAME} made invalid move.")
-    elif client_index is None:
+    
+    client_index = get_move_index(move_client)
+    if client_index is None:
         return (f"{CLIENT_NAME} made invalid move")
     
-    client_win_index = (server_index + 1) % len(MOVES)
-    server_win_index = (client_index + 1) % len(MOVES)
+    client_win_index = server_index + 1 % len(MOVES)
+    server_win_index = client_index + 1 % len(MOVES)
+    print(f"Server_index: {server_index}, Server_win_index: {server_win_index}, client_index: {client_index}, client_wind_index: {client_win_index}")
     
     if server_win_index == client_index:
         add_score(SERVER_NAME)
@@ -205,7 +230,7 @@ def check_who_wins_round(move_server, move_client):
     else:
         return "DRAW!"
 
-def end_game(max_score):
+def check_gameover(max_score):
     global SOCK
     for n in range(len(SCORE)):
         if SCORE[n] >= max_score:
@@ -213,62 +238,22 @@ def end_game(max_score):
             return True
     else: 
         return False
+def exch_names():
+    global SERVER_NAME
+    global CLIENT_NAME
+    if ROLE == SERVER_NAME:
+        send_data(SERVER_NAME)
+        CLIENT_NAME = recv_data()
+    elif ROLE == CLIENT_NAME:
+        send_data(CLIENT_NAME)
+        SERVER_NAME = recv_data()
     
-def recv_data():
-    global SOCK
-    global CLIENT_CONNECTION
-    try:
-        if ROLE == CLIENT_NAME:
-            if SOCK:
-                return SOCK.recv(1024).decode()
-        elif ROLE == SERVER_NAME:
-            if CLIENT_CONNECTION:
-                return CLIENT_CONNECTION.recv(1024).decode()
-    except socket.timeout:
-        print("Connection timed out.")
-        return None
-    except Exception as e:
-        print (f"An error occured {e}")
-        return None
-        
-    
-def send_data(data):
-    global SOCK
-    global CLIENT_CONNECTION
-    try:
-        if ROLE == CLIENT_NAME:
-            if SOCK:
-                SOCK.send(data.encode()) 
-        elif ROLE == SERVER_NAME:
-            if CLIENT_CONNECTION:
-                CLIENT_CONNECTION.send(data.encode())
-    except socket.timeout:
-        print("Connection timed out.")
-        return None
-    except Exception as e:
-        print (f"An error occured {e}")
-        return None
-
-def close_socket():
-    global SOCK
-    global CLIENT_CONNECTION
-    
-    if ROLE == CLIENT_NAME:
-        if SOCK:
-            SOCK.close()
-            SOCK = None
-    elif ROLE == SERVER_NAME:
-        if SOCK:
-            SOCK.close()
-            SOCK = None
-            CLIENT_CONNECTION.close()
-            CLIENT_CONNECTION = None
-        
-
+    return None
 # ---- CLIENT FUNCTION ---- #
-def client_program(max_score: int):
+def client_program():
+    exch_names()
     while True:
-        if end_game(max_score):
+        if check_gameover(MAX_SCORE):
             break
         print("Waiting for opponents move...")
         server_move = recv_data()
@@ -282,9 +267,10 @@ def client_program(max_score: int):
         move = "?"
         while not is_valid_move(move):
             move = input("Pick your move: ")
-            if user_enters_exit(move):
+            if check_if_exit(move):
                 send_data(move)
-                break
+                close_socket()
+                sys.exit()
 
         send_data(move)
 
@@ -295,17 +281,17 @@ def client_program(max_score: int):
     close_socket()
 
 # ---- SERVER FUNCTION ---- #
-def server_program(max_score: int):
+def server_program():
     establish_client_connection()
-
+    exch_names()
     while True:
-        if end_game(max_score):
+        if check_gameover(MAX_SCORE):
             break
         
         move = "?"
         while not is_valid_move(move):
             move = input ("Pick your move: ")
-            if user_enters_exit(move):
+            if check_if_exit(move):
                 send_data(move)
                 close_socket()
                 sys.exit()
@@ -314,6 +300,7 @@ def server_program(max_score: int):
         
         print("Awaiting opponents move...")
         client_move = recv_data()
+        
         if client_move == None:
             print("No move received from opponent. Ending game.")
             break
@@ -328,11 +315,45 @@ def server_program(max_score: int):
     close_socket()
     sys.exit()
 
-# ----- GAME PROGRAM ----- #
+# ----- PROGRAM ----- #
+ans = "?"
+#Ask player to be client, server or single-player
+print("Welcome to the game!")
+while ans not in {CLIENT_NAME, SERVER_NAME, SINGLE_PLAYER}: 
+    ans = input(f"Do you want to be Server ({SERVER_NAME}), Client ({CLIENT_NAME}) or create a single-player ({SINGLE_PLAYER}) server: ")
+    if check_if_exit(ans):
+        sys.exit()
+
+if ans == SINGLE_PLAYER:
+    ROLE = SERVER_NAME
+    pickname()
+    SOCK = serverside_get_play_socket(True)
+    
+elif ans == SERVER_NAME:
+    ROLE = SERVER_NAME
+    pickname()
+    SOCK = serverside_get_play_socket(False)
+    if  check_if_exit(SOCK):
+        sys.exit()
+
+elif ans == CLIENT_NAME:
+    ROLE = CLIENT_NAME
+    pickname()
+    HOST = "?"
+    while not is_valid_IPv4(HOST):
+        HOST = input(f"Enter the server IP or {SINGLE_PLAYER} for single player: ")
+        if check_if_exit(HOST):
+            sys.exit()
+        if (HOST == SINGLE_PLAYER):
+            break
+    SOCK = clientside_get_play_socket(HOST)
+else: 
+    sys.exit()
+# ----- GAME initialization ----- #
 if ROLE == CLIENT_NAME:
-    client_program(MAX_SCORE)
+    client_program()
 elif ROLE == SERVER_NAME:
-    server_program(MAX_SCORE)
+    server_program()
 else: 
     print("ROLE error: " + ROLE + "Client name: " + CLIENT_NAME + "Server name: " + SERVER_NAME)
     SOCK.close()
