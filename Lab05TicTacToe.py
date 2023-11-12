@@ -59,12 +59,12 @@ def ask_for_host():
 def check_if_quit(exit: str):
     try:
         exit = exit.lower()
-    except AttributeError:
+    except AttributeError or WindowsError:
         exit = "exit"
 
     if exit == "exit":
+        print("The connection has been terminated.")
         if SOCK:
-            print("Game has been exited. Ending game.")
             if exit:
                 send_data(exit)
             close_connection()
@@ -77,7 +77,12 @@ def establish_connection(ans):
     global ROLE, SOCK
     if ans == SINGLE_PLAYER:
         ROLE = SERVER
-        SOCK = serverside_get_play_socket(True)
+        try:
+            SOCK = serverside_get_play_socket(True)
+        except OSError:
+            ROLE = CLIENT
+            host = "127.0.0.1"
+            SOCK = clientside_get_play_socket(host)
     
     elif ans == SERVER:
         ROLE = SERVER
@@ -97,12 +102,21 @@ def pick_score():
                 MAX_SCORE = input("Pick the max score for this game (1-10): ")
                 check_if_quit(MAX_SCORE)
                 MAX_SCORE = int(MAX_SCORE)
-            except ValueError: 
+            except ValueError or TypeError: 
                 print("Please enter an integer between 1 and 10")
         send_data(MAX_SCORE)
     else:
         print("Waiting for server...")
-        MAX_SCORE = int(recv_data())
+        try:
+            MAX_SCORE = recv_data()
+        except OSError:
+            print("Did not receive MAX_SCORE")
+            check_if_quit("exit")
+        if(MAX_SCORE == "exit"):
+            print("Opponent exited the game.")
+            check_if_quit(MAX_SCORE)
+        else: 
+            MAX_SCORE = int(MAX_SCORE)
 
 #Get data from the buffer. Notice that it's always received as string
 def recv_data():
@@ -226,8 +240,11 @@ def clientside_get_play_socket(host):
 
 #User picks own name, role is assigned based on this. 
 def pick_name():
-    name = input("Pick your name: ")
-    check_if_quit(name)
+    name = ""
+    print("Please pick a name with a minimum length of 2")
+    while len(name) <= 1:
+        name = input("Pick your name: ")   
+        check_if_quit(name)
     return name
 
 #Initialize the game
@@ -311,9 +328,12 @@ def add_score(winner, opponent, name):
     
 def play_a_round(opponent, name):
     move = make_move()
-    send_data(move)
-    
-    opponents_move = recv_data()
+    try: 
+        send_data(move)
+        opponents_move = recv_data()
+    except OSError:
+        check_if_quit("exit")
+
     check_if_quit(opponents_move)
     
     print(f"{opponent} picks {opponents_move}!")
@@ -322,30 +342,38 @@ def play_a_round(opponent, name):
     
     add_score(winner, opponent, name)
 
-def gameover():
+def check_game_winner(opponent, name):
     if SERVER_SCORE >= MAX_SCORE:
-        print(f"Game over!\nThe winner is {SERVER} with a score of {SERVER_SCORE}!")
-        return True
+        if ROLE == SERVER:
+            return name
+        else:
+            return opponent
     elif CLIENT_SCORE >= MAX_SCORE:
-        print(f"Game over!\nThe winner is {CLIENT} with a score of {CLIENT_SCORE}!")
-    else: 
-        return False
+        if ROLE == CLIENT:
+            return name
+        else:
+            return opponent
+    return "None"
     
 # ---- CALLER FUNCTIONS ---- #
 def play(opponent, name):
     global CLIENT_SCORE, SERVER_SCORE
+    winner = "None"
     
     print(f"\n{name} vs {opponent}! Max score is {MAX_SCORE}. Good luck!")
-    while not gameover():
+    while winner == "None":
         result = play_a_round(opponent, name)
-        if result == "exit":
-            break
-        elif ROLE == CLIENT:
+        if ROLE == CLIENT:
             print(f"{name}: {CLIENT_SCORE}, {opponent}: {SERVER_SCORE}\n")
+            winner = check_game_winner(opponent, name)
             continue
         elif ROLE == SERVER:
             print(f"{name}: {SERVER_SCORE}, {opponent}: {CLIENT_SCORE}\n")
+            winner = check_game_winner(opponent, name)
             continue
+        check_game_winner(opponent, name)
+
+    print(f"The winner is {winner}! Congratulations!")
 
 #Start game for server
 def server_start():
