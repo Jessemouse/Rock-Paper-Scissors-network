@@ -29,8 +29,8 @@ SERVER = "server"
 CLIENT = "client"
 SINGLE_PLAYER = "single"
 MAX_SCORE = 0
-SOCK = None
-CLIENT_CONNECTION = None
+SERVER_SOCK = None
+CLIENT_SOCK = None
 TIMEOUT = 60
 MOVES = ( #Notice: n loses against n + 1. MOVES is TIGHTLY coupled with winning logic.
     ("rock", "r"),
@@ -44,7 +44,7 @@ def exch_name(name):
     send_data(name)
     opponent = recv_data()
     return opponent
-        
+
 #Asks for IP to connect to
 def ask_for_host():
     host = "?"
@@ -64,34 +64,35 @@ def check_if_quit(exit: str):
 
     if exit == "exit":
         print("The connection has been terminated.")
-        if SOCK:
+        if SERVER_SOCK:
             if exit:
                 send_data(exit)
             close_connection()
             sys.exit()
         else:
             sys.exit()
-            
+    return
+
 #Establish the game connection with appropriate roles and sockets
 def establish_connection(ans):
-    global ROLE, SOCK
+    global ROLE, SERVER_SOCK
     if ans == SINGLE_PLAYER:
         ROLE = SERVER
         try:
-            SOCK = serverside_get_play_socket(True)
+            SERVER_SOCK = serverside_get_play_socket(True)
         except OSError:
             ROLE = CLIENT
             host = "127.0.0.1"
-            SOCK = clientside_get_play_socket(host)
+            SERVER_SOCK = clientside_get_play_socket(host)
     
     elif ans == SERVER:
         ROLE = SERVER
-        SOCK = serverside_get_play_socket(False)
+        SERVER_SOCK = serverside_get_play_socket(False)
 
     elif ans == CLIENT:
         ROLE = CLIENT
         host = ask_for_host()
-        SOCK = clientside_get_play_socket(host)
+        SERVER_SOCK = clientside_get_play_socket(host)
         
 #Lets server pick the score
 def pick_score():
@@ -122,11 +123,11 @@ def pick_score():
 def recv_data():
     try:
         if ROLE == CLIENT:
-            if SOCK:
-                return SOCK.recv(1024).decode()
+            if SERVER_SOCK:
+                return SERVER_SOCK.recv(1024).decode()
         elif ROLE == SERVER:
-            if CLIENT_CONNECTION:
-                return CLIENT_CONNECTION.recv(1024).decode()
+            if CLIENT_SOCK:
+                return CLIENT_SOCK.recv(1024).decode()
     except socket.timeout:
         print("Connection timed out.")
         return None
@@ -139,11 +140,11 @@ def send_data(data):
     data = str(data)
     try:
         if ROLE == CLIENT:
-            if SOCK:
-                SOCK.send(data.encode()) 
+            if SERVER_SOCK:
+                SERVER_SOCK.send(data.encode()) 
         elif ROLE == SERVER:
-            if CLIENT_CONNECTION:
-                CLIENT_CONNECTION.send(data.encode())
+            if CLIENT_SOCK:
+                CLIENT_SOCK.send(data.encode())
     except socket.timeout:
         print("Connection timed out.")
         return None
@@ -153,26 +154,26 @@ def send_data(data):
     
 #Shuts down SOCK and CLIENT_CONNECTION
 def close_connection():
-    global SOCK, CLIENT_CONNECTION
+    global SERVER_SOCK, CLIENT_SOCK
     
     if ROLE == CLIENT:
-        if SOCK:
-            SOCK.close()
-            SOCK = None
+        if SERVER_SOCK:
+            SERVER_SOCK.close()
+            SERVER_SOCK = None
     elif ROLE == SERVER:
-        if SOCK:
-            SOCK.close()
-            SOCK = None
-        if CLIENT_CONNECTION:
-            CLIENT_CONNECTION.close()
-            CLIENT_CONNECTION = None
+        if SERVER_SOCK:
+            SERVER_SOCK.close()
+            SERVER_SOCK = None
+        if CLIENT_SOCK:
+            CLIENT_SOCK.close()
+            CLIENT_SOCK = None
 
 #Used by server to open the connection.
 def establish_client_connection():
-    global CLIENT_CONNECTION
+    global CLIENT_SOCK
     try:
-        CLIENT_CONNECTION, address = SOCK.accept()
-        CLIENT_CONNECTION.settimeout(TIMEOUT)
+        CLIENT_SOCK, address = SERVER_SOCK.accept()
+        CLIENT_SOCK.settimeout(TIMEOUT)
         print(f"Connection established with: " + str(address))
     except TimeoutError:
         print("The connection timed out. Exiting program.")
@@ -241,9 +242,10 @@ def clientside_get_play_socket(host):
 #User picks own name, role is assigned based on this. 
 def pick_name():
     name = ""
-    print("Please pick a name with a minimum length of 2")
-    while len(name) <= 1:
-        name = input("Pick your name: ")   
+    name = input("Please pick a name with a length between 2 and 12 characters: ")  
+    check_if_quit(name)
+    while len(name) <= 1 or len(name) >= 13:
+        name = input("Please pick a name: ")
         check_if_quit(name)
     return name
 
