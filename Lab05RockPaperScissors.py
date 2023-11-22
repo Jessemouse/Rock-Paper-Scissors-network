@@ -20,7 +20,7 @@
 import socket
 import sys
 
-# ----- GLOBAL VARIABLES -----
+# ----- GLOBAL VARIABLES ----- #
 PORT = 60_003
 ROLE = "?"
 SERVER_SCORE = 0 
@@ -230,7 +230,6 @@ def serverside_get_play_socket(single: bool):
 
 #Open client socket
 def clientside_get_play_socket(host):
-    global CLIENT, SERVER
     
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     if host.lower() == "single":
